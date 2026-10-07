@@ -1,0 +1,126 @@
+name: OFS Plugin CI/CD
+ 
+on:
+ 
+  pull_request:
+    branches:
+      - main
+ 
+  push:
+    branches:
+      - main
+ 
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target OFS environment"
+        required: true
+        type: choice
+        options:
+          - DEV
+          - SIT
+          - UAT
+          - TRAINING
+          - PROD
+ 
+permissions:
+  contents: read
+ 
+env:
+  NODE_VERSION: "20"
+  PLUGIN_DIR: "plugins/customer-plugin"
+  PACKAGE_NAME: "ofs-plugin"
+ 
+jobs:
+ 
+  # ============================================================
+  # 1. VALIDATION
+  # ============================================================
+ 
+  validate:
+ 
+    name: Validate OFS Plugin
+ 
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - maximo-dev
+ 
+    steps:
+ 
+      - name: Checkout source
+        uses: actions/checkout@v4
+ 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+ 
+      - name: Install dependencies
+        run: npm ci
+ 
+      - name: Run ESLint
+        uses: sibiraj-s/action-eslint@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          eslint-args: "--ignore-path=.gitignore --quiet"
+ 
+      - name: Run unit tests
+        run: npm test --if-present
+ 
+      - name: Build plugin
+        run: npm run build
+ 
+  # ============================================================
+  # 2. PACKAGE
+  # ============================================================
+ 
+  package:
+ 
+    name: Package OFS Plugin
+ 
+    needs:
+      - validate
+ 
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - maximo-dev
+ 
+    steps:
+ 
+      - name: Checkout source
+        uses: actions/checkout@v4
+ 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+ 
+      - name: Install dependencies
+        run: npm ci
+ 
+      - name: Build plugin
+        run: npm run build
+ 
+      - name: Create plugin ZIP
+        run: |
+          mkdir -p package
+          cd ${{ env.PLUGIN_DIR }}
+ 
+          zip -r ../../package/${{ env.PACKAGE_NAME }}-${{ github.sha }}.zip .
+ 
+      - name: Verify package
+        run: |
+          ls -lh package/
+          unzip -l package/${{ env.PACKAGE_NAME }}-${{ github.sha }}.zip
+ 
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE_NAME }}-${{ github.sha }}
+          path: package/${{ env.PACKAGE_NAME }}-${{ github.sha }}.zip
+          retention-days: 30
