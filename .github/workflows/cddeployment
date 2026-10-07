@@ -1,0 +1,52 @@
+  deploy-dev:
+
+    name: Deploy Plugin to OFS DEV
+
+    needs:
+      - build-and-package
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: OFS-DEV
+
+    steps:
+
+      # ==========================================================
+      # Download artifact from GitHub Artifact Store
+      # ==========================================================
+
+      - name: Download plugin artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}-${{ github.sha }}
+          path: package
+
+      # ==========================================================
+      # Show package
+      # ==========================================================
+
+      - name: Verify downloaded artifact
+        run: |
+          ls -lh package/
+
+      # ==========================================================
+      # Deploy to OFS
+      # ==========================================================
+
+      - name: Deploy plugin to OFS
+        env:
+          OFS_URL: ${{ vars.OFS_URL }}
+          OFS_PLUGIN_ID: ${{ vars.OFS_PLUGIN_ID }}
+          OFS_ACCESS_TOKEN: ${{ secrets.OFS_ACCESS_TOKEN }}
+
+        run: |
+
+          curl --fail-with-body \
+            --request PUT \
+            --url "${OFS_URL}/rest/ofscMetadata/v1/plugins/${OFS_PLUGIN_ID}" \
+            --header "Authorization: Bearer ${OFS_ACCESS_TOKEN}" \
+            --header "Content-Type: application/zip" \
+            --data-binary "@package/${PLUGIN_NAME}-${GITHUB_SHA}.zip"
