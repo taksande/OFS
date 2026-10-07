@@ -1,0 +1,131 @@
+name: OFS Plugin CI
+
+on:
+
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  PLUGIN_NAME: "ofs-plugin"
+  PLUGIN_ID: ${{ vars.OFS_PLUGIN_ID }}
+
+jobs:
+
+  build-and-package:
+
+    name: Build and Package OFS Plugin
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ==========================================================
+      # 1. Checkout source code
+      # ==========================================================
+
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      # ==========================================================
+      # 2. Setup Node.js
+      # ==========================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # ==========================================================
+      # 3. Install dependencies
+      # ==========================================================
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ==========================================================
+      # 4. ESLint
+      # ==========================================================
+
+      - name: Run ESLint
+        run: npm run lint
+
+      # ==========================================================
+      # 5. Webpack build
+      # ==========================================================
+
+      - name: Build plugin
+        run: npm run build
+
+      # ==========================================================
+      # 6. Verify build output
+      # ==========================================================
+
+      - name: Verify dist
+        run: |
+          test -d dist
+          find dist -type f
+
+      # ==========================================================
+      # 7. Copy manifest
+      # ==========================================================
+
+      - name: Prepare plugin package
+        run: |
+          mkdir -p package
+          cp -r dist/* package/
+
+          if [ -f manifest.json ]; then
+            cp manifest.json package/
+          elif [ -f public/manifest.json ]; then
+            cp public/manifest.json package/
+          fi
+
+      # ==========================================================
+      # 8. Create ZIP
+      # ==========================================================
+
+      - name: Create plugin ZIP
+        run: |
+          cd package
+
+          zip -r \
+            ../${{ env.PLUGIN_NAME }}-${{ github.sha }}.zip \
+            .
+
+          cd ..
+
+          ls -lh \
+            ${{ env.PLUGIN_NAME }}-${{ github.sha }}.zip
+
+      # ==========================================================
+      # 9. Validate ZIP
+      # ==========================================================
+
+      - name: Validate plugin package
+        run: |
+          unzip -t \
+            ${{ env.PLUGIN_NAME }}-${{ github.sha }}.zip
+
+      # ==========================================================
+      # 10. Upload GitHub Artifact
+      # ==========================================================
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PLUGIN_NAME }}-${{ github.sha }}
+          path: ${{ env.PLUGIN_NAME }}-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 30
