@@ -17,7 +17,7 @@ permissions:
 jobs:
   detect-changes:
     name: Detect Plugin Changes
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     outputs:
       plugin_changed: ${{ steps.filter.outputs.plugin }}
@@ -32,20 +32,18 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          base: ${{ github.event.repository.default_branch }}
           filters: |
             plugin:
               - 'transmission_emergency_plugin-1.1.264-sources/**'
 
   build-and-package:
-    name: Build and Package OFS Plugin
+    name: Build OFS Angular Plugin
     needs: detect-changes
+    runs-on: windows-latest
 
     if: >-
       needs.detect-changes.outputs.plugin_changed == 'true' ||
       github.event_name == 'workflow_dispatch'
-
-    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
@@ -62,25 +60,14 @@ jobs:
         working-directory: transmission_emergency_plugin-1.1.264-sources
         run: npm ci
 
-      - name: Build Angular Plugin
+      - name: Execute Grunt Build
         working-directory: transmission_emergency_plugin-1.1.264-sources
         run: npx grunt build
 
-      - name: Verify Hosted Output
-        run: |
-          test -d transmission_emergency_plugin-1.1.264-hosted
-
-      - name: Create Hosted ZIP
-        uses: vimtor/action-zip@v1.3
-        with:
-          files: transmission_emergency_plugin-1.1.264-hosted/
-          dest: transmission_emergency_plugin-1.1.264-hosted.zip
-          recursive: true
-
-      - name: Upload CI Artifact
+      - name: Upload Hosted ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
           name: transmission_emergency_plugin-1.1.264-hosted
-          path: transmission_emergency_plugin-1.1.264-hosted.zip
+          path: transmission_emergency_plugin-1.1.264-sources/transmission_emergency_plugin-1.1.264-hosted.zip
           if-no-files-found: error
           retention-days: 14
