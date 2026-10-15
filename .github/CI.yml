@@ -47,7 +47,7 @@ jobs:
         uses: wagoid/commitlint-github-action@v6
 
   security-checks:
-    name: Security and Code Quality
+    name: Secret Detection and Linting
     runs-on: ubuntu-latest
 
     steps:
@@ -66,16 +66,50 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VALIDATE_ALL_CODEBASE: true
 
+  dependency-scan:
+    name: OWASP Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Scan Dependencies
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'CV-CT'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          args: >
+            --failOnCVSS 7
+
+      - name: Upload Dependency Scan Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv-ct-dependency-scan-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
   build:
     name: Build ZIP on Windows
-    needs: [delta-check, pr-validation, security-checks]
+    needs:
+      - delta-check
+      - pr-validation
+      - security-checks
+      - dependency-scan
+
     if: >-
       always() &&
       needs.security-checks.result == 'success' &&
+      needs.dependency-scan.result == 'success' &&
       (needs.pr-validation.result == 'success' ||
        needs.pr-validation.result == 'skipped') &&
       (github.event_name == 'workflow_dispatch' ||
        needs.delta-check.outputs.changed == 'true')
+
     runs-on: windows-latest
 
     steps:
