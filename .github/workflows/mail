@@ -1,0 +1,45 @@
+notify:
+  name: Email CI Result
+  needs:
+    - delta-check
+    - pr-validation
+    - security-checks
+    - dependency-scan
+    - build
+  if: always() && vars.ENABLE_CI_EMAIL == 'true'
+  runs-on: ubuntu-latest
+  steps:
+    - name: Determine CI result
+      id: result
+      shell: bash
+      run: |
+        if [[ "${{ needs.security-checks.result }}" == "success" && \
+               "${{ needs.dependency-scan.result }}" == "success" && \
+               ( "${{ needs.pr-validation.result }}" == "success" || \
+                 "${{ needs.pr-validation.result }}" == "skipped" ) && \
+               ( "${{ needs.build.result }}" == "success" || \
+                 "${{ needs.build.result }}" == "skipped" ) ]]; then
+          echo "status=SUCCESS" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=FAILURE" >> "$GITHUB_OUTPUT"
+        fi
+ 
+    - name: Send CI email
+      uses: <approved-email-action>@<pinned-version-or-sha>
+      with:
+        server_address: ${{ vars.MAIL_SERVER }}
+        server_port: ${{ vars.MAIL_PORT }}
+        username: ${{ secrets.MAIL_USERNAME }}
+        password: ${{ secrets.MAIL_PASSWORD }}
+        subject: "[CV-CT CI] ${{ steps.result.outputs.status }} - ${{ github.ref_name }}"
+        to: ${{ vars.CI_EMAIL_TO }}
+        from: ${{ vars.CI_EMAIL_FROM }}
+        body: |
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Event: ${{ github.event_name }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Actor: ${{ github.actor }}
+          Result: ${{ steps.result.outputs.status }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
