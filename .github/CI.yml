@@ -1,0 +1,106 @@
+
+name: CV-CT Free Marketplace CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  delta-check:
+    name: Detect Delta Changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.source }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Detect Changed Files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            source:
+              - '**'
+              - '!README.md'
+
+  pr-validation:
+    name: PR and Commit Validation
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR Title
+        uses: Slashgear/action-check-pr-title@v4
+        with:
+          regexp: '^(feat|fix|docs|build|ci|test|refactor)(\([a-z0-9-]+\))?: .+'
+
+      - name: Validate Commit Messages
+        uses: wagoid/commitlint-github-action@v6
+
+  security-checks:
+    name: Security and Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret Detection
+        uses: gitleaks/gitleaks-action@v2
+
+      - name: Lint and Code Quality
+        uses: super-linter/super-linter@v7
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_ALL_CODEBASE: true
+
+  build:
+    name: Build ZIP on Windows
+    needs: [delta-check, pr-validation, security-checks]
+    if: >-
+      always() &&
+      needs.security-checks.result == 'success' &&
+      (needs.pr-validation.result == 'success' ||
+       needs.pr-validation.result == 'skipped') &&
+      (github.event_name == 'workflow_dispatch' ||
+       needs.delta-check.outputs.changed == 'true')
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Unit Tests
+        run: npm test --if-present
+
+      - name: Run Grunt Build
+        run: npx grunt build
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv-ct-build
+          path: '**/*.zip'
+          if-no-files-found: error
+          retention-days: 7
