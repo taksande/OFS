@@ -1,0 +1,196 @@
+name: CV-CT Free Marketplace CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  delta-check:
+    name: Detect Delta Changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.source }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Detect Changed Files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            source:
+              - '**'
+              - '!README.md'
+
+  pr-validation:
+    name: PR and Commit Validation
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate PR Title
+        uses: Slashgear/action-check-pr-title@v4
+        with:
+          regexp: '^(feat|fix|docs|build|ci|test|refactor)(\([a-z0-9-]+\))?: .+'
+
+      - name: Validate Commit Messages
+        uses: wagoid/commitlint-github-action@v6
+
+  security-checks:
+    name: Secret Detection and Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret Detection
+        uses: gitleaks/gitleaks-action@v2
+
+      - name: Lint and Code Quality
+        uses: super-linter/super-linter@v7
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VALIDATE_ALL_CODEBASE: true
+
+  dependency-scan:
+    name: OWASP Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Scan Dependencies
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'CV-CT'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+          args: >
+            --failOnCVSS 7
+
+      - name: Upload Dependency Scan Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv-ct-dependency-scan-report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  build:
+    name: Build ZIP on Windows
+    needs:
+      - delta-check
+      - pr-validation
+      - security-checks
+      - dependency-scan
+
+    if: >-
+      always() &&
+      needs.security-checks.result == 'success' &&
+      needs.dependency-scan.result == 'success' &&
+      (needs.pr-validation.result == 'success' ||
+       needs.pr-validation.result == 'skipped') &&
+      (github.event_name == 'workflow_dispatch' ||
+       needs.delta-check.outputs.changed == 'true')
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Unit Tests
+        run: npm test --if-present
+
+      - name: Run Grunt Build
+        run: npx grunt build
+
+      - name: Upload ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv-ct-build
+          path: '**/*.zip'
+          if-no-files-found: error
+          retention-days: 7
+
+  notify:
+    name: Email CI Result
+    needs:
+      - delta-check
+      - pr-validation
+      - security-checks
+      - dependency-scan
+      - build
+    if: always() && vars.ENABLE_CI_EMAIL == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine CI result
+        id: result
+        shell: bash
+        env:
+          DELTA_RESULT: ${{ needs.delta-check.result }}
+          PR_RESULT: ${{ needs.pr-validation.result }}
+          SECURITY_RESULT: ${{ needs.security-checks.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-scan.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          if [[ "$DELTA_RESULT" == "success" &&
+                "$SECURITY_RESULT" == "success" &&
+                "$DEPENDENCY_RESULT" == "success" &&
+                ( "$PR_RESULT" == "success" || "$PR_RESULT" == "skipped" ) &&
+                ( "$BUILD_RESULT" == "success" || "$BUILD_RESULT" == "skipped" ) ]]; then
+            echo "status=SUCCESS" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=FAILURE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send CI email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ vars.MAIL_SERVER }}
+          server_port: ${{ vars.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "[CV-CT CI] ${{ steps.result.outputs.status }} - ${{ github.ref_name }}"
+          to: ${{ vars.CI_EMAIL_TO }}
+          from: ${{ vars.CI_EMAIL_FROM }}
+          body: |
+            Repository: ${{ github.repository }}
+            Workflow: ${{ github.workflow }}
+            Event: ${{ github.event_name }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Actor: ${{ github.actor }}
+            Delta check: ${{ needs.delta-check.result }}
+            PR validation: ${{ needs.pr-validation.result }}
+            Security checks: ${{ needs.security-checks.result }}
+            Dependency scan: ${{ needs.dependency-scan.result }}
+            Build: ${{ needs.build.result }}
+            Overall result: ${{ steps.result.outputs.status }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
